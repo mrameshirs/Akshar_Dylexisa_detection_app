@@ -1,5 +1,6 @@
 import streamlit as st
 import time
+import json
 from streamlit_js_eval import streamlit_js_eval
 
 # -----------------------------------------------------------------------------
@@ -67,7 +68,7 @@ function onResults(results) {
     canvas.height = document.getElementById('webcam').videoHeight;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    if (frameCount % 6 !== 0) return; // Process every 6th frame
+    if (frameCount % 6 !== 0) return; // Process every 6th frame to save CPU
     
     if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
         const lm = results.multiFaceLandmarks[0];
@@ -78,7 +79,7 @@ function onResults(results) {
         window.aksharMetrics.lastX = currentX;
         window.aksharMetrics.risk = Math.min(99, Math.floor(window.aksharMetrics.regressions * 12));
         
-        // Draw dots
+        // Draw tracking dots
         ctx.beginPath(); ctx.arc(lm[468].x * canvas.width, lm[468].y * canvas.height, 5, 0, 2*Math.PI); ctx.fillStyle='#00ff00'; ctx.fill();
         ctx.beginPath(); ctx.arc(lm[473].x * canvas.width, lm[473].y * canvas.height, 5, 0, 2*Math.PI); ctx.fillStyle='#00ff00'; ctx.fill();
         
@@ -104,19 +105,24 @@ window.resetAkshar = function() { window.aksharMetrics = { regressions: 0, fixat
 """
 
 # -----------------------------------------------------------------------------
-# STATE & BRIDGE LOGIC
+# STATE & BRIDGE LOGIC (Fixed JSON Parsing)
 # -----------------------------------------------------------------------------
 if 'session_active' not in st.session_state:
     st.session_state.session_active = False
 
-# Execute the JS UI
-st.components.v1.html(js_code, height=550, scrolling=False)
+# 1. Render the JS UI using st.markdown to avoid v1.html deprecation warnings
+st.markdown(js_code, unsafe_allow_html=True)
 
-# THE BRIDGE: Pull JS variables into Python
-js_data = streamlit_js_eval(js_expressions="window.aksharMetrics || '{\"regressions\":0, \"fixations\":0, \"risk\":0}'", key="fetch_metrics")
+# 2. Pull JS variables into Python as a JSON string
+js_raw = streamlit_js_eval(
+    js_expressions="JSON.stringify(window.aksharMetrics || {regressions:0, fixations:0, risk:0})", 
+    key="fetch_metrics"
+)
 
-# Fallback if JS hasn't loaded yet
-if js_data is None:
+# 3. Safely parse the JSON string into a Python dictionary
+if js_raw:
+    js_data = json.loads(js_raw)
+else:
     js_data = {"regressions": 0, "fixations": 0, "risk": 0}
 
 regressions = int(js_data.get("regressions", 0))
@@ -135,20 +141,20 @@ with col1:
     btn_col1, btn_col2, btn_col3 = st.columns(3)
     with btn_col1:
         if st.button("▶ Start Session", use_container_width=True, type="primary"):
-            st.components.v1.html("<script>window.startAkshar();</script>", height=0)
+            st.markdown("<script>window.startAkshar();</script>", unsafe_allow_html=True)
             st.session_state.session_active = True
     with btn_col2:
         if st.button("⏹ End Session", use_container_width=True):
-            st.components.v1.html("<script>window.stopAkshar();</script>", height=0)
+            st.markdown("<script>window.stopAkshar();</script>", unsafe_allow_html=True)
             st.session_state.session_active = False
     with btn_col3:
         if st.button("🔄 Reset", use_container_width=True):
-            st.components.v1.html("<script>window.resetAkshar();</script>", height=0)
+            st.markdown("<script>window.resetAkshar();</script>", unsafe_allow_html=True)
             st.session_state.session_active = False
 
     st.markdown("""
     <div class="embossed-card" style="margin-top: 15px;">
-        <b>📖 Reading Task:</b><br>
+        <b> Reading Task:</b><br>
         "The quick brown fox jumps over the lazy dog. Reading is a complex cognitive process that requires smooth eye movements across the page..."
     </div>
     """, unsafe_allow_html=True)
@@ -185,7 +191,7 @@ with col2:
 st.markdown("---")
 st.markdown('<p style="text-align: center; color: #666; font-size: 0.8rem;">Nithyamithran Ramesh | Class VII B | Manav Mandir High School | INSPIRE MANAK</p>', unsafe_allow_html=True)
 
-# Auto-refresh to update the dashboard
+# Auto-refresh to update the dashboard smoothly
 if st.session_state.session_active:
     time.sleep(1.5)
     st.rerun()
